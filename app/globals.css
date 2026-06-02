@@ -1,0 +1,49 @@
+@import "mapbox-gl/dist/mapbox-gl.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #eef2f6;
+  color: #0b0f1a;
+  min-height: 100vh;
+}
+
+.mapboxgl-popup-content {
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.mapboxgl-canvas {
+  outline: none;
+}
+
+.route-sample-marker-shell {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.route-sample-marker {
+  display: block;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  background: #111827;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.28);
+  transition:
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+
+.route-sample-marker--selected {
+  background: #f59e0b;
+  transform: scale(1.45);
+}
