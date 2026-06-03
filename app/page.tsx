@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import MapView from "@/components/MapView";
 import ResultsList from "@/components/ResultsList";
 import RoutePreviewPlaceholder from "@/components/RoutePreviewPlaceholder";
+import RouteSummaryPanel from "@/components/RouteSummaryPanel";
 import TripInfoPanel from "@/components/TripInfoPanel";
 import UnitsToggle from "@/components/UnitsToggle";
 import { detectUnitsFromLocale, getStoredUnits, storeUnits } from "@/lib/client/units";
@@ -19,6 +20,7 @@ interface ApiResponse {
     coordinates: [number, number];
     distanceFromStartMeters: number;
     etaISO: string;
+    locationName: string;
     weather: {
       temp: number;
       windSpeed: number;
@@ -109,12 +111,28 @@ export default function HomePage() {
 
   const samples = useMemo(() => data?.samples ?? [], [data]);
   const route = useMemo(() => data?.route.lineString ?? null, [data]);
+  const mapSamples = useMemo(
+    () =>
+      samples.map((sample) => ({
+        coordinates: sample.coordinates,
+        index: sample.index,
+        distanceFromStartMeters: sample.distanceFromStartMeters,
+        weather: {
+          temp: sample.weather.temp,
+          windSpeed: sample.weather.windSpeed,
+          condition: sample.weather.condition,
+          precipProb: sample.weather.precipProb
+        }
+      })),
+    [samples]
+  );
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setLoading(true);
     setError(null);
     setSelectedIndex(null);
+    setData(null);
 
     try {
       const res = await fetch("/api/route-weather", {
@@ -143,24 +161,24 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen p-3 text-slate-950 md:p-4">
-      <div className="mx-auto max-w-[1800px]">
-        <header className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <main className="min-h-screen p-2 text-slate-950 md:p-2.5">
+      <div className="mx-auto max-w-[1920px]">
+        <header className="mb-2 flex flex-col gap-2 px-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-xl font-semibold leading-7 text-slate-950">WeatherMaps</h1>
-            <p className="text-sm leading-5 text-slate-600">Weather along your route, aligned to ETA.</p>
+            <h1 className="text-xl font-semibold leading-7 text-white">WeatherMaps</h1>
+            <p className="text-sm leading-5 text-slate-400">Weather along your route, aligned to ETA.</p>
           </div>
           <UnitsToggle units={units} isAuto={unitsAuto} onChange={handleUnitsChange} />
         </header>
 
-        <div className="grid gap-3 xl:grid-cols-[320px_minmax(620px,1fr)_330px] xl:items-start">
-          <section className="rounded-lg border border-slate-300 bg-white p-4 shadow-sm xl:h-[calc(100vh-76px)] xl:overflow-auto">
+        <div className="grid gap-3 xl:grid-cols-[308px_minmax(720px,1fr)_320px] xl:items-start">
+          <section className="rounded-xl border border-slate-700/70 bg-[#f8fafc] p-3.5 shadow-[0_10px_28px_rgb(0_0_0/0.24)] xl:h-[calc(100vh-58px)] xl:overflow-auto">
             <div>
-              <h2 className="text-base font-semibold leading-6 text-slate-950">Trip Info</h2>
+              <h2 className="text-base font-bold leading-6 text-slate-950">Trip Info</h2>
               <p className="text-sm leading-5 text-slate-600">Set the route and departure time.</p>
             </div>
 
-            <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+            <form onSubmit={handleSubmit} className="mt-3.5 space-y-2.5">
               <div>
                 <label className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Origin</label>
                 <div className="relative">
@@ -170,7 +188,7 @@ export default function HomePage() {
                     onFocus={() => setActiveField("origin")}
                     onBlur={() => setTimeout(() => setActiveField(null), 150)}
                     placeholder="Start typing a place..."
-                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 focus:border-slate-600 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-inner shadow-slate-100/60 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                     required
                   />
                   {activeField === "origin" && originSuggestions.length > 0 && (
@@ -201,7 +219,7 @@ export default function HomePage() {
                     onFocus={() => setActiveField("destination")}
                     onBlur={() => setTimeout(() => setActiveField(null), 150)}
                     placeholder="Start typing a place..."
-                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 focus:border-slate-600 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-inner shadow-slate-100/60 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                     required
                   />
                   {activeField === "destination" && destinationSuggestions.length > 0 && (
@@ -229,13 +247,13 @@ export default function HomePage() {
                   type="datetime-local"
                   value={departAt}
                   onChange={(event) => setDepartAt(event.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 focus:border-slate-600 focus:outline-none"
+                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-inner shadow-slate-100/60 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                 />
               </div>
               <button
                 type="submit"
                 disabled={loading}
-                className="mt-1 w-full rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-1 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-950/20 transition hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/35 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? "Calculating..." : "Show Weather Along Route"}
               </button>
@@ -246,36 +264,36 @@ export default function HomePage() {
               </div>
             )}
             {data && (
-              <TripInfoPanel
-                originName={data.origin.name}
-                destinationName={data.destination.name}
-                departAtISO={samples[0]?.etaISO ?? new Date(departAt).toISOString()}
-                durationSeconds={data.route.durationSeconds}
-                distanceMeters={data.route.distanceMeters}
-                sampleCount={data.samples.length}
-                units={units}
-              />
+              <>
+                <TripInfoPanel
+                  originName={data.origin.name}
+                  destinationName={data.destination.name}
+                  departAtISO={samples[0]?.etaISO ?? new Date(departAt).toISOString()}
+                  durationSeconds={data.route.durationSeconds}
+                  distanceMeters={data.route.distanceMeters}
+                  sampleCount={data.samples.length}
+                  units={units}
+                />
+                <RouteSummaryPanel samples={samples} units={units} onSelectSample={setSelectedIndex} />
+              </>
             )}
             {!data && <RoutePreviewPlaceholder />}
           </section>
 
-          <section className="rounded-lg border border-slate-300 bg-white p-2 shadow-sm xl:h-[calc(100vh-76px)]">
+          <section className="rounded-xl border border-slate-700 bg-slate-950 p-1.5 shadow-[0_16px_40px_rgb(0_0_0/0.38)] xl:h-[calc(100vh-58px)]">
             <div className="h-[60vh] min-h-[420px] xl:h-full xl:min-h-0">
               <MapView
                 route={route}
-                samples={samples.map((sample) => ({
-                  coordinates: sample.coordinates,
-                  index: sample.index
-                }))}
+                samples={mapSamples}
                 selectedIndex={selectedIndex}
                 onSelect={setSelectedIndex}
               />
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-300 bg-white p-4 shadow-sm xl:h-[calc(100vh-76px)]">
+          <section className="rounded-xl border border-slate-700/70 bg-[#f8fafc] p-3.5 shadow-[0_10px_28px_rgb(0_0_0/0.24)] xl:h-[calc(100vh-58px)]">
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold leading-6 text-slate-950">Weather Samples</h2>
+              <h2 className="text-base font-bold leading-6 text-slate-950">Weather Samples</h2>
               {data && (
                 <span className="text-xs text-slate-500">
                   {data.samples.length} points · {formatDistance(data.route.distanceMeters, units)}

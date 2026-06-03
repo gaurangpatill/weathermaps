@@ -7,6 +7,7 @@ interface SampleListItem {
   index: number;
   distanceFromStartMeters: number;
   etaISO: string;
+  locationName?: string;
   weather: {
     temp: number;
     windSpeed: number;
@@ -49,6 +50,9 @@ export default function ResultsList({ samples, selectedIndex, onSelect, units }:
               <span className="text-xs font-medium text-slate-500">
                 ETA {new Date(sample.etaISO).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </span>
+            </div>
+            <div className="mt-1 truncate text-xs font-medium leading-4 text-slate-600">
+              {sample.locationName || "Location unavailable"}
             </div>
             <div className="mt-1.5 flex items-center justify-between text-sm">
               <span className={`capitalize ${isUnavailable ? "text-slate-400" : "text-slate-700"}`}>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { directions, geocode } from "@/lib/mapbox";
+import { directions, geocode, reverseGeocodeLocations } from "@/lib/mapbox";
 import { etaForSamples } from "@/lib/eta";
 import { sampleLineStringEveryMeters } from "@/lib/geo";
 import { getWeatherForRoute } from "@/lib/weather";
@@ -61,13 +61,17 @@ export async function POST(req: Request) {
       }
     );
 
-    const weatherPerSample = await getWeatherForRoute(samplesWithEta);
+    const [weatherPerSample, locationNames] = await Promise.all([
+      getWeatherForRoute(samplesWithEta),
+      reverseGeocodeLocations(samplesWithEta.map((sample) => sample.coordinates))
+    ]);
 
     const weatherResults = samplesWithEta.map((sample, idx) => ({
       index: sample.index,
       coordinates: sample.coordinates,
       distanceFromStartMeters: sample.distanceFromStartMeters,
       etaISO: sample.etaDate.toISOString(),
+      locationName: locationNames[idx],
       weather: weatherPerSample[idx]
     }));
 

@@ -10,7 +10,7 @@
 
 body {
   font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #eef2f6;
+  background: #0b1220;
   color: #0b0f1a;
   min-height: 100vh;
 }
@@ -30,20 +30,63 @@ body {
 
 .route-sample-marker {
   display: block;
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   padding: 0;
   cursor: pointer;
   border: 2px solid #ffffff;
   border-radius: 9999px;
-  background: #111827;
-  box-shadow: 0 1px 4px rgb(15 23 42 / 0.28);
+  background: #334155;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.35);
   transition:
     background-color 140ms ease,
     transform 140ms ease;
 }
 
+.route-sample-marker--neutral {
+  background: #334155;
+}
+
+.route-sample-marker--clear {
+  background: #d97706;
+}
+
+.route-sample-marker--cloud {
+  background: #64748b;
+}
+
+.route-sample-marker--fog {
+  background: #94a3b8;
+}
+
+.route-sample-marker--rain {
+  background: #5b7c99;
+}
+
+.route-sample-marker--storm {
+  background: #7f1d1d;
+}
+
+.route-sample-marker--snow {
+  background: #0891b2;
+}
+
 .route-sample-marker--selected {
   background: #f59e0b;
-  transform: scale(1.45);
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.95),
+    0 2px 8px rgb(15 23 42 / 0.35);
+  transform: scale(1.65);
+}
+
+.mapboxgl-ctrl-group {
+  border: 1px solid rgb(203 213 225);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.12);
+}
+
+.mapboxgl-ctrl-scale {
+  border-color: #334155;
+  color: #334155;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
