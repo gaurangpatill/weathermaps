@@ -3,6 +3,8 @@ import test from "node:test";
 import { haversineMeters, lineStringLengthMeters } from "../lib/geo.ts";
 import {
   buildWeatherRouteSegments,
+  WEATHER_ROUTE_COLORS,
+  weatherRouteColorForSample,
   weatherRouteConditionForSample,
   type WeatherRouteSample
 } from "../lib/weatherRouteSegments.ts";
@@ -17,7 +19,13 @@ function weather(overrides: Partial<WeatherRouteSample["weather"]> = {}) {
   };
 }
 
-test("builds colored route segments along the actual route geometry", () => {
+function assertCoordinateClose(actual: [number, number] | undefined, expected: [number, number]) {
+  assert.ok(actual, "Expected coordinate to exist");
+  assert.ok(Math.abs(actual[0] - expected[0]) < 0.000001);
+  assert.ok(Math.abs(actual[1] - expected[1]) < 0.000001);
+}
+
+test("builds one colored route segment per weather sample along the actual route geometry", () => {
   const route = {
     type: "LineString" as const,
     coordinates: [
@@ -49,19 +57,59 @@ test("builds colored route segments along the actual route geometry", () => {
     }
   ]);
 
-  assert.equal(segments.features.length, 2);
-  assert.deepEqual(segments.features[0].geometry.coordinates.at(-1), [0, 1]);
-  assert.deepEqual(segments.features[1].geometry.coordinates[0], [0, 1]);
-  assert.notDeepEqual(segments.features[0].geometry.coordinates.at(-1), [0.5, 0.5]);
-  assert.equal(segments.features[0].properties.weatherCondition, "rain");
-  assert.equal(segments.features[1].properties.weatherCondition, "clear");
+  assert.equal(segments.features.length, 3);
+  assert.equal(segments.features[0].properties.sampleIndex, 0);
+  assert.equal(segments.features[1].properties.sampleIndex, 1);
+  assert.equal(segments.features[2].properties.sampleIndex, 2);
+  assertCoordinateClose(segments.features[0].geometry.coordinates[0], [0, 0]);
+  assertCoordinateClose(segments.features.at(-1)?.geometry.coordinates.at(-1), [1, 1]);
+  assert.ok(
+    segments.features[1].geometry.coordinates.some(
+      (coordinate) => coordinate[0] === 0 && coordinate[1] === 1
+    )
+  );
+  assert.equal(segments.features[0].properties.weatherCondition, "clear");
+  assert.equal(segments.features[1].properties.weatherCondition, "rain");
+  assert.equal(segments.features[2].properties.weatherCondition, "clear");
 });
 
 test("maps route colors to actual weather conditions", () => {
-  assert.equal(weatherRouteConditionForSample({ index: 0, coordinates: [0, 0], distanceFromStartMeters: 0, weather: weather({ condition: "Mostly Clear" }) }), "clear");
-  assert.equal(weatherRouteConditionForSample({ index: 0, coordinates: [0, 0], distanceFromStartMeters: 0, weather: weather({ condition: "Cloudy" }) }), "cloudy");
-  assert.equal(weatherRouteConditionForSample({ index: 0, coordinates: [0, 0], distanceFromStartMeters: 0, weather: weather({ condition: "Light Rain" }) }), "rain");
-  assert.equal(weatherRouteConditionForSample({ index: 0, coordinates: [0, 0], distanceFromStartMeters: 0, weather: weather({ condition: "Thunderstorm" }) }), "storm");
-  assert.equal(weatherRouteConditionForSample({ index: 0, coordinates: [0, 0], distanceFromStartMeters: 0, weather: weather({ condition: "Snow" }) }), "snow");
-  assert.equal(weatherRouteConditionForSample({ index: 0, coordinates: [0, 0], distanceFromStartMeters: 0, weather: weather({ condition: "Fog" }) }), "fog");
+  const base = { index: 0, coordinates: [0, 0] as [number, number], distanceFromStartMeters: 0 };
+
+  assert.equal(
+    weatherRouteConditionForSample({ ...base, weather: weather({ condition: "Mostly Clear" }) }),
+    "clear"
+  );
+  assert.equal(
+    weatherRouteConditionForSample({ ...base, weather: weather({ condition: "Cloudy" }) }),
+    "cloudy"
+  );
+  assert.equal(
+    weatherRouteConditionForSample({ ...base, weather: weather({ condition: "Light Rain" }) }),
+    "rain"
+  );
+  assert.equal(
+    weatherRouteConditionForSample({ ...base, weather: weather({ condition: "Thunderstorm" }) }),
+    "storm"
+  );
+  assert.equal(
+    weatherRouteConditionForSample({ ...base, weather: weather({ condition: "Snow" }) }),
+    "snow"
+  );
+  assert.equal(
+    weatherRouteConditionForSample({ ...base, weather: weather({ condition: "Fog" }) }),
+    "fog"
+  );
+});
+
+test("uses the shared palette for route segments and markers", () => {
+  const sample = {
+    index: 0,
+    coordinates: [0, 0] as [number, number],
+    distanceFromStartMeters: 0,
+    weather: weather({ condition: "Light Rain" })
+  };
+
+  assert.equal(weatherRouteColorForSample(sample), WEATHER_ROUTE_COLORS.rain);
+  assert.equal(WEATHER_ROUTE_COLORS.rain, "#3b82f6");
 });

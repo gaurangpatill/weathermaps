@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { directions, geocode, reverseGeocodeLocations } from "@/lib/mapbox";
 import { etaForSamples } from "@/lib/eta";
 import { sampleLineStringEveryMeters } from "@/lib/geo";
+import { parseRoutePreferences } from "@/lib/routePreferences";
 import { getWeatherForRoute } from "@/lib/weather";
 
 const BASE_SPACING_METERS = 15000;
@@ -13,6 +14,7 @@ export async function POST(req: Request) {
     const origin = typeof body.origin === "string" ? body.origin : "";
     const destination = typeof body.destination === "string" ? body.destination : "";
     const departAtRaw = typeof body.departAt === "string" ? body.departAt : undefined;
+    const preferences = parseRoutePreferences(body.preferences);
 
     if (!origin || !destination) {
       return NextResponse.json({ error: "Origin and destination are required." }, { status: 400 });
@@ -28,7 +30,7 @@ export async function POST(req: Request) {
       geocode(destination)
     ]);
 
-    const route = await directions(originResult.coordinates, destinationResult.coordinates);
+    const route = await directions(originResult.coordinates, destinationResult.coordinates, preferences);
 
     const samples = sampleLineStringEveryMeters(
       route.lineString,
@@ -83,6 +85,7 @@ export async function POST(req: Request) {
         durationSeconds: route.durationSeconds,
         lineString: route.lineString
       },
+      preferences,
       samples: weatherResults,
       bbox
     });
@@ -100,7 +103,7 @@ export async function POST(req: Request) {
 
 export async function GET() {
   return NextResponse.json(
-    { error: "Use POST with JSON body: { origin, destination, departAt?, units? }" },
+    { error: "Use POST with JSON body: { origin, destination, departAt?, units?, preferences? }" },
     { status: 405 }
   );
 }

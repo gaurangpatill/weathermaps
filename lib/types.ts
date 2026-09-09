@@ -28,6 +28,12 @@ export interface SampleETA extends SamplePoint {
 
 export type Units = "metric" | "imperial";
 
+export interface RoutePreferences {
+  avoidWeatherRisk: boolean;
+  avoidTolls: boolean;
+  avoidHighways: boolean;
+}
+
 export interface WeatherPoint {
   temp: number;
   windSpeed: number;

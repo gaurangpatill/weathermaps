@@ -3,12 +3,16 @@
 import mapboxgl from "mapbox-gl";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LineString } from "@/lib/types";
-import { buildWeatherRouteSegments } from "@/lib/weatherRouteSegments";
+import {
+  buildWeatherRouteSegments,
+  WEATHER_ROUTE_COLORS,
+  weatherRouteColorForSample
+} from "@/lib/weatherRouteSegments";
 
 const MAPBOX_STYLE_URL = "mapbox://styles/mapbox/standard";
 const MAPBOX_STYLE_CONFIG = {
   basemap: {
-    lightPreset: "day",
+    lightPreset: "night" as "day" | "night",
     showPointOfInterestLabels: true,
     showRoadLabels: true,
     showPlaceLabels: true,
@@ -24,8 +28,126 @@ function isMapStyleReady(map: mapboxgl.Map) {
   }
 }
 
+function emptyRouteFeature() {
+  return {
+    type: "Feature" as const,
+    geometry: { type: "LineString" as const, coordinates: [] },
+    properties: {}
+  };
+}
+
+function emptyWeatherRouteSegments() {
+  return {
+    type: "FeatureCollection" as const,
+    features: []
+  };
+}
+
+function ensureRouteSourceAndLayer(map: mapboxgl.Map) {
+  if (!isMapStyleReady(map)) return false;
+  if (!map.getSource("route")) {
+    map.addSource("route", {
+      type: "geojson",
+      data: emptyRouteFeature()
+    });
+  }
+  if (!map.getSource("weather-route-segments")) {
+    map.addSource("weather-route-segments", {
+      type: "geojson",
+      data: emptyWeatherRouteSegments()
+    });
+  }
+  if (!map.getLayer("route-glow")) {
+    map.addLayer({
+      id: "route-glow",
+      type: "line",
+      source: "route",
+      layout: {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      paint: {
+        "line-blur": 8,
+        "line-color": "#38bdf8",
+        "line-opacity": 0.46,
+        "line-width": 20
+      }
+    });
+  }
+  if (!map.getLayer("route-casing")) {
+    map.addLayer({
+      id: "route-casing",
+      type: "line",
+      source: "route",
+      layout: {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      paint: {
+        "line-color": "#020817",
+        "line-width": 12,
+        "line-opacity": 0.92
+      }
+    });
+  }
+  if (!map.getLayer("route-line")) {
+    map.addLayer({
+      id: "route-line",
+      type: "line",
+      source: "route",
+      layout: {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      paint: {
+        "line-color": "#93c5fd",
+        "line-width": 9,
+        "line-opacity": 0.28
+      }
+    });
+  }
+  if (!map.getLayer("weather-route-line")) {
+    map.addLayer({
+      id: "weather-route-line",
+      type: "line",
+      source: "weather-route-segments",
+      layout: {
+        "line-cap": "butt",
+        "line-join": "round"
+      },
+      paint: {
+        "line-color": [
+          "match",
+          ["get", "weatherCondition"],
+          "clear",
+          WEATHER_ROUTE_COLORS.clear,
+          "cloudy",
+          WEATHER_ROUTE_COLORS.cloudy,
+          "rain",
+          WEATHER_ROUTE_COLORS.rain,
+          "storm",
+          WEATHER_ROUTE_COLORS.storm,
+          "snow",
+          WEATHER_ROUTE_COLORS.snow,
+          "mix",
+          WEATHER_ROUTE_COLORS.mix,
+          "fog",
+          WEATHER_ROUTE_COLORS.fog,
+          "wind",
+          WEATHER_ROUTE_COLORS.wind,
+          WEATHER_ROUTE_COLORS.unknown
+        ],
+        "line-width": 8,
+        "line-opacity": 1
+      }
+    });
+  }
+  return true;
+}
+
 interface MapViewProps {
   route: LineString | null;
+  mapPreset: "day" | "night";
   samples: {
     coordinates: [number, number];
     index: number;
@@ -38,14 +160,35 @@ interface MapViewProps {
     };
   }[];
   selectedIndex: number | null;
+  sampleMarkersAwake: boolean;
   onSelect: (index: number) => void;
+  onToggleSampleMarkers: () => void;
 }
 
-export default function MapView({ route, samples, selectedIndex, onSelect }: MapViewProps) {
+export default function MapView({
+  route,
+  mapPreset,
+  samples,
+  selectedIndex,
+  sampleMarkersAwake,
+  onSelect,
+  onToggleSampleMarkers
+}: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const initialMapPresetRef = useRef(mapPreset);
   const markersRef = useRef<Map<number, mapboxgl.Marker>>(new Map());
+  const endpointMarkersRef = useRef<{ start?: mapboxgl.Marker; end?: mapboxgl.Marker }>({});
   const markerSetKeyRef = useRef("");
+  const pendingFitRef = useRef(false);
+  const syncRouteLayersRef = useRef<
+    (map: mapboxgl.Map, options?: { fitRoute?: boolean }) => boolean
+  >(() => false);
+  const syncSampleMarkersRef = useRef<(map: mapboxgl.Map) => boolean>(() => false);
+  const syncEndpointMarkersRef = useRef<(map: mapboxgl.Map) => boolean>(() => false);
+  const flushMapStateRef = useRef<
+    (map: mapboxgl.Map, options?: { fitRoute?: boolean }) => boolean
+  >(() => false);
   const [tokenMissing, setTokenMissing] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -61,22 +204,208 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
     () => buildWeatherRouteSegments(route, samples),
     [route, samples]
   );
+  const latestMapStateRef = useRef<{
+    route: LineString | null;
+    samples: MapViewProps["samples"];
+    selectedIndex: number | null;
+    sampleMarkersAwake: boolean;
+    onSelect: (index: number) => void;
+    weatherRouteSegments: typeof weatherRouteSegments;
+  }>({ route, samples, selectedIndex, sampleMarkersAwake, onSelect, weatherRouteSegments });
+  latestMapStateRef.current = {
+    route,
+    samples,
+    selectedIndex,
+    sampleMarkersAwake,
+    onSelect,
+    weatherRouteSegments
+  };
 
   function isLngLat(coordinates: [number, number]) {
     const [lng, lat] = coordinates;
     return Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90;
   }
 
-  function markerConditionClass(condition?: string) {
-    const normalized = condition?.toLowerCase() ?? "";
-    if (normalized.includes("thunder") || normalized.includes("storm")) return "route-sample-marker--storm";
-    if (normalized.includes("rain") || normalized.includes("drizzle")) return "route-sample-marker--rain";
-    if (normalized.includes("snow") || normalized.includes("ice")) return "route-sample-marker--snow";
-    if (normalized.includes("clear")) return "route-sample-marker--clear";
-    if (normalized.includes("fog") || normalized.includes("mist") || normalized.includes("haze")) return "route-sample-marker--fog";
-    if (normalized.includes("cloud") || normalized.includes("fog")) return "route-sample-marker--cloud";
-    return "route-sample-marker--neutral";
+  function fitRouteBounds(map: mapboxgl.Map, line: LineString) {
+    if (line.coordinates.length <= 1) return;
+    const bounds = line.coordinates.reduce(
+      (b, coord) => b.extend(coord as [number, number]),
+      new mapboxgl.LngLatBounds(
+        line.coordinates[0] as [number, number],
+        line.coordinates[0] as [number, number]
+      )
+    );
+    map.fitBounds(bounds, { padding: 80, duration: 800 });
+    lastFitRef.current = Date.now();
   }
+
+  function syncRouteLayers(map: mapboxgl.Map, options: { fitRoute?: boolean } = {}) {
+    if (!ensureRouteSourceAndLayer(map)) return false;
+    const latest = latestMapStateRef.current;
+    const routeSource = map.getSource("route") as mapboxgl.GeoJSONSource | undefined;
+    const weatherSource = map.getSource("weather-route-segments") as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+
+    if (routeSource) {
+      routeSource.setData(
+        latest.route
+          ? {
+              type: "Feature",
+              geometry: latest.route,
+              properties: {}
+            }
+          : emptyRouteFeature()
+      );
+    }
+    if (weatherSource) {
+      weatherSource.setData(
+        (latest.route ? latest.weatherRouteSegments : emptyWeatherRouteSegments()) as Parameters<
+          mapboxgl.GeoJSONSource["setData"]
+        >[0]
+      );
+    }
+
+    if (options.fitRoute && latest.route) {
+      fitRouteBounds(map, latest.route);
+      pendingFitRef.current = false;
+    }
+    map.triggerRepaint();
+    return true;
+  }
+
+  function markerCode(condition: string) {
+    const normalized = condition.toLowerCase();
+    if (normalized.includes("snow") || normalized.includes("ice")) return "SN";
+    if (normalized.includes("storm") || normalized.includes("thunder")) return "ST";
+    if (normalized.includes("rain") || normalized.includes("drizzle")) return "RN";
+    if (normalized.includes("fog")) return "FG";
+    if (normalized.includes("wind")) return "WD";
+    if (normalized.includes("cloud")) return "CL";
+    return "OK";
+  }
+
+  function removeEndpointMarkers() {
+    endpointMarkersRef.current.start?.remove();
+    endpointMarkersRef.current.end?.remove();
+    endpointMarkersRef.current = {};
+  }
+
+  function createEndpointMarker(kind: "start" | "end") {
+    const el = document.createElement("div");
+    el.className = `route-endpoint-pin route-endpoint-pin--${kind}`;
+    const dot = document.createElement("span");
+    dot.className = "route-endpoint-pin__dot";
+    const label = document.createElement("span");
+    label.className = "route-endpoint-pin__label";
+    label.textContent = kind === "start" ? "Start" : "Finish";
+    el.appendChild(dot);
+    el.appendChild(label);
+    return new mapboxgl.Marker({ element: el, anchor: "bottom" });
+  }
+
+  function syncEndpointMarkers(map: mapboxgl.Map) {
+    const latest = latestMapStateRef.current;
+    const coordinates = latest.route?.coordinates ?? [];
+    const start = coordinates[0] as [number, number] | undefined;
+    const end = coordinates[coordinates.length - 1] as [number, number] | undefined;
+
+    if (!start || !end || !isLngLat(start) || !isLngLat(end)) {
+      removeEndpointMarkers();
+      return true;
+    }
+
+    if (!endpointMarkersRef.current.start) {
+      endpointMarkersRef.current.start = createEndpointMarker("start").setLngLat(start).addTo(map);
+    }
+    if (!endpointMarkersRef.current.end) {
+      endpointMarkersRef.current.end = createEndpointMarker("end").setLngLat(end).addTo(map);
+    }
+    endpointMarkersRef.current.start.setLngLat(start);
+    endpointMarkersRef.current.end.setLngLat(end);
+    return true;
+  }
+
+  function syncSampleMarkers(map: mapboxgl.Map) {
+    if (!isMapStyleReady(map)) return false;
+    const latest = latestMapStateRef.current;
+    const existing = markersRef.current;
+
+    if (!latest.sampleMarkersAwake || latest.samples.length === 0) {
+      existing.forEach((marker) => marker.remove());
+      existing.clear();
+      markerSetKeyRef.current = "";
+      map.triggerRepaint();
+      return true;
+    }
+
+    const markerSetKey = latest.samples
+      .map(
+        (sample) =>
+          `${sample.index}:${sample.coordinates[0].toFixed(5)},${sample.coordinates[1].toFixed(5)}`
+      )
+      .join("|");
+
+    if (markerSetKeyRef.current !== markerSetKey) {
+      existing.forEach((marker) => marker.remove());
+      existing.clear();
+      markerSetKeyRef.current = markerSetKey;
+    }
+
+    const nextIds = new Set(latest.samples.map((sample) => sample.index));
+    Array.from(existing.entries()).forEach(([index, marker]) => {
+      if (!nextIds.has(index)) {
+        marker.remove();
+        existing.delete(index);
+      }
+    });
+
+    latest.samples.forEach((sample) => {
+      let marker = existing.get(sample.index);
+      if (!marker) {
+        const el = document.createElement("div");
+        el.className = "route-sample-marker-shell";
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "route-hazard-marker";
+        button.setAttribute("aria-label", `Select weather sample ${sample.index + 1}`);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          latestMapStateRef.current.onSelect(sample.index);
+        });
+        el.appendChild(button);
+
+        marker = new mapboxgl.Marker({ element: el }).setLngLat(sample.coordinates).addTo(map);
+        existing.set(sample.index, marker);
+      } else {
+        marker.setLngLat(sample.coordinates);
+      }
+      const button = marker.getElement().querySelector<HTMLButtonElement>(".route-hazard-marker");
+      if (button) {
+        const isSelected = sample.index === latest.selectedIndex;
+        button.className = "route-hazard-marker";
+        button.textContent = markerCode(sample.weather.condition);
+        button.style.setProperty("--route-sample-color", weatherRouteColorForSample(sample));
+        button.classList.toggle("route-hazard-marker--selected", isSelected);
+        button.setAttribute("aria-pressed", String(isSelected));
+      }
+    });
+    map.triggerRepaint();
+    return true;
+  }
+
+  function flushMapState(map: mapboxgl.Map, options: { fitRoute?: boolean } = {}) {
+    const syncedRoute = syncRouteLayers(map, options);
+    const syncedMarkers = syncSampleMarkers(map);
+    const syncedEndpoints = syncEndpointMarkers(map);
+    return syncedRoute && syncedMarkers && syncedEndpoints;
+  }
+  syncRouteLayersRef.current = syncRouteLayers;
+  syncSampleMarkersRef.current = syncSampleMarkers;
+  syncEndpointMarkersRef.current = syncEndpointMarkers;
+  flushMapStateRef.current = flushMapState;
 
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
@@ -94,122 +423,36 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: MAPBOX_STYLE_URL,
-      config: MAPBOX_STYLE_CONFIG,
+      config: {
+        basemap: {
+          ...MAPBOX_STYLE_CONFIG.basemap,
+          lightPreset: initialMapPresetRef.current
+        }
+      },
       center: [-98.5795, 39.8283],
       zoom: 3
     });
 
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "bottom-right");
     map.addControl(new mapboxgl.ScaleControl({ unit: "imperial", maxWidth: 100 }), "bottom-left");
-    const ensureRouteSourceAndLayer = () => {
+    const markReadyAndFlush = () => {
       if (!isMapStyleReady(map)) return;
-      if (!map.getSource("route")) {
-        map.addSource("route", {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            geometry: { type: "LineString", coordinates: [] },
-            properties: {}
-          }
-        });
-      }
-      if (!map.getSource("weather-route-segments")) {
-        map.addSource("weather-route-segments", {
-          type: "geojson",
-          data: {
-            type: "FeatureCollection",
-            features: []
-          }
-        });
-      }
-      // Add casing before the main route so the path stays legible over roads, labels, parks, and water.
-      if (!map.getLayer("route-casing")) {
-        map.addLayer({
-          id: "route-casing",
-          type: "line",
-          source: "route",
-          layout: {
-            "line-cap": "round",
-            "line-join": "round"
-          },
-          paint: {
-            "line-color": "#ffffff",
-            "line-width": 8,
-            "line-opacity": 0.92
-          }
-        });
-      }
-      if (!map.getLayer("route-line")) {
-        map.addLayer({
-          id: "route-line",
-          type: "line",
-          source: "route",
-          layout: {
-            "line-cap": "round",
-            "line-join": "round"
-          },
-          paint: {
-            "line-color": "#0f3d63",
-            "line-width": 4,
-            "line-opacity": 0.38
-          }
-        });
-      }
-      if (!map.getLayer("weather-route-line")) {
-        map.addLayer({
-          id: "weather-route-line",
-          type: "line",
-          source: "weather-route-segments",
-          layout: {
-            "line-cap": "round",
-            "line-join": "round"
-          },
-          paint: {
-            "line-color": [
-              "match",
-              ["get", "weatherCondition"],
-              "clear",
-              "#f59e0b",
-              "cloudy",
-              "#64748b",
-              "rain",
-              "#5b7c99",
-              "storm",
-              "#7f1d1d",
-              "snow",
-              "#06b6d4",
-              "fog",
-              "#94a3b8",
-              "wind",
-              "#0f766e",
-              "#334155"
-            ],
-            "line-width": 5.5,
-            "line-opacity": 0.98
-          }
-        });
-      }
+      setMapLoaded(true);
+      map.resize();
+      flushMapStateRef.current(map, { fitRoute: pendingFitRef.current });
+      if (loadTimeoutRef.current) window.clearTimeout(loadTimeoutRef.current);
+      if (loadCheckRef.current) window.clearInterval(loadCheckRef.current);
+      setMapError(null);
     };
 
     map.on("load", () => {
-      map.resize();
-      ensureRouteSourceAndLayer();
-      if (isMapStyleReady(map)) {
-        setMapLoaded(true);
-        if (loadTimeoutRef.current) window.clearTimeout(loadTimeoutRef.current);
-        if (loadCheckRef.current) window.clearInterval(loadCheckRef.current);
-        setMapError(null);
-      }
+      markReadyAndFlush();
     });
     map.on("styledata", () => {
-      if (isMapStyleReady(map)) {
-        setMapLoaded(true);
-        map.resize();
-        if (loadTimeoutRef.current) window.clearTimeout(loadTimeoutRef.current);
-        if (loadCheckRef.current) window.clearInterval(loadCheckRef.current);
-        setMapError(null);
-        ensureRouteSourceAndLayer();
-      }
+      markReadyAndFlush();
+    });
+    map.on("idle", () => {
+      markReadyAndFlush();
     });
     map.on("error", (event) => {
       const message =
@@ -220,12 +463,7 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
     mapRef.current = map;
 
     loadCheckRef.current = window.setInterval(() => {
-      if (isMapStyleReady(map)) {
-        setMapLoaded(true);
-        map.resize();
-        ensureRouteSourceAndLayer();
-        if (loadCheckRef.current) window.clearInterval(loadCheckRef.current);
-      }
+      markReadyAndFlush();
     }, 500);
 
     loadTimeoutRef.current = window.setTimeout(() => {
@@ -241,6 +479,8 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
       if (loadCheckRef.current) window.clearInterval(loadCheckRef.current);
       markers.forEach((marker) => marker.remove());
       markers.clear();
+      removeEndpointMarkers();
+      markerSetKeyRef.current = "";
       map.remove();
       mapRef.current = null;
       setMapLoaded(false);
@@ -250,105 +490,27 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
-
-    if (!isMapStyleReady(map)) return;
-    const source = map.getSource("route") as mapboxgl.GeoJSONSource | undefined;
-    if (source) {
-      source.setData({
-        type: "Feature",
-        geometry: route ?? { type: "LineString", coordinates: [] },
-        properties: {}
-      });
+    try {
+      map.setConfigProperty("basemap", "lightPreset", mapPreset);
+    } catch {
+      // Older Mapbox runtimes may ignore basemap config changes.
     }
-
-    if (route && route.coordinates.length > 1) {
-      const bounds = route.coordinates.reduce(
-        (b, coord) => b.extend(coord as [number, number]),
-        new mapboxgl.LngLatBounds(
-          route.coordinates[0] as [number, number],
-          route.coordinates[0] as [number, number]
-        )
-      );
-      map.fitBounds(bounds, { padding: 80, duration: 800 });
-      lastFitRef.current = Date.now();
-    }
-  }, [route, mapLoaded]);
+  }, [mapPreset, mapLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !isMapStyleReady(map)) return;
-
-    const weatherSource = map.getSource("weather-route-segments") as
-      | mapboxgl.GeoJSONSource
-      | undefined;
-    if (weatherSource) {
-      weatherSource.setData(
-        weatherRouteSegments as unknown as Parameters<mapboxgl.GeoJSONSource["setData"]>[0]
-      );
-    }
-  }, [weatherRouteSegments, mapLoaded]);
+    pendingFitRef.current = Boolean(route);
+    if (!map || !mapLoaded) return;
+    const synced = syncRouteLayersRef.current(map, { fitRoute: Boolean(route) });
+    syncEndpointMarkersRef.current(map);
+    if (!synced) pendingFitRef.current = Boolean(route);
+  }, [route, weatherRouteSegments, mapLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
-
-    if (!isMapStyleReady(map)) return;
-
-    const existing = markersRef.current;
-    const markerSetKey = samples
-      .map(
-        (sample) =>
-          `${sample.index}:${sample.coordinates[0].toFixed(5)},${sample.coordinates[1].toFixed(5)}`
-      )
-      .join("|");
-
-    if (markerSetKeyRef.current !== markerSetKey) {
-      existing.forEach((marker) => marker.remove());
-      existing.clear();
-      markerSetKeyRef.current = markerSetKey;
-    }
-
-    const nextIds = new Set(samples.map((sample) => sample.index));
-
-    Array.from(existing.entries()).forEach(([index, marker]) => {
-      if (!nextIds.has(index)) {
-        marker.remove();
-        existing.delete(index);
-      }
-    });
-
-    samples.forEach((sample) => {
-      let marker = existing.get(sample.index);
-      if (!marker) {
-        const el = document.createElement("div");
-        el.className = "route-sample-marker-shell";
-
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "route-sample-marker";
-        button.setAttribute("aria-label", `Select weather sample ${sample.index + 1}`);
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onSelect(sample.index);
-        });
-        el.appendChild(button);
-
-        marker = new mapboxgl.Marker({ element: el }).setLngLat(sample.coordinates).addTo(map);
-        existing.set(sample.index, marker);
-      } else {
-        marker.setLngLat(sample.coordinates);
-      }
-      const button = marker.getElement().querySelector<HTMLButtonElement>(".route-sample-marker");
-      if (button) {
-        const isSelected = sample.index === selectedIndex;
-        button.className = `route-sample-marker ${markerConditionClass(sample.weather.condition)}`;
-        button.classList.toggle("route-sample-marker--selected", isSelected);
-        button.setAttribute("aria-pressed", String(isSelected));
-      }
-    });
-    map.triggerRepaint();
-  }, [samples, selectedIndex, onSelect, mapLoaded]);
+    syncSampleMarkersRef.current(map);
+  }, [samples, selectedIndex, sampleMarkersAwake, onSelect, mapLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -363,7 +525,7 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
 
   if (tokenMissing) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white text-sm text-slate-500">
+      <div className="flex h-full w-full items-center justify-center border border-dashed border-white/10 bg-slate-950 text-sm text-slate-400">
         Missing NEXT_PUBLIC_MAPBOX_TOKEN
       </div>
     );
@@ -371,50 +533,27 @@ export default function MapView({ route, samples, selectedIndex, onSelect }: Map
 
   if (mapError) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded-lg border border-dashed border-rose-200 bg-rose-50 px-6 text-center text-sm text-rose-700">
+      <div className="flex h-full w-full items-center justify-center border border-dashed border-red-300/30 bg-red-950/30 px-6 text-center text-sm text-red-100">
         {mapError}
       </div>
     );
   }
 
   return (
-    <div className="relative h-full w-full rounded-lg">
-      <div ref={containerRef} className="absolute inset-0 rounded-lg" />
-      {weatherRouteSegments.features.length > 0 && (
-        <div className="pointer-events-none absolute left-3 top-3 rounded-lg border border-slate-200/90 bg-white/95 px-2.5 py-2 text-[11px] font-medium text-slate-700 shadow-sm">
-          <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-            Route weather
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#f59e0b]" />
-              Clear
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#64748b]" />
-              Cloudy
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#5b7c99]" />
-              Rain
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#7f1d1d]" />
-              Storm
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#06b6d4]" />
-              Snow
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#94a3b8]" />
-              Fog
-            </span>
-          </div>
-        </div>
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="absolute inset-0" />
+      {samples.length > 0 && (
+        <button
+          type="button"
+          aria-pressed={sampleMarkersAwake}
+          onClick={onToggleSampleMarkers}
+          className="absolute bottom-36 right-4 z-10 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-slate-200 shadow-xl shadow-black/25 backdrop-blur-xl transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-400/30 xl:bottom-32"
+        >
+          {sampleMarkersAwake ? "Hazards On" : "Hazards Off"}
+        </button>
       )}
       {!mapLoaded && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white text-sm text-slate-500">
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950 text-sm text-slate-400">
           Loading map…
         </div>
       )}

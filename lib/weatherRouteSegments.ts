@@ -7,9 +7,22 @@ export type WeatherRouteCondition =
   | "rain"
   | "storm"
   | "snow"
+  | "mix"
   | "fog"
   | "wind"
   | "unknown";
+
+export const WEATHER_ROUTE_COLORS: Record<WeatherRouteCondition, string> = {
+  clear: "#facc15",
+  cloudy: "#64748b",
+  rain: "#3b82f6",
+  storm: "#ef4444",
+  snow: "#67e8f9",
+  mix: "#a855f7",
+  fog: "#94a3b8",
+  wind: "#14b8a6",
+  unknown: "#334155"
+};
 
 export interface WeatherRouteSample {
   index: number;
@@ -97,10 +110,13 @@ export function weatherRouteConditionForSample(sample: WeatherRouteSample): Weat
   if (!weather) return "unknown";
 
   const normalized = weather.condition.toLowerCase();
+  if (normalized.includes("unavailable") || normalized.includes("unknown")) return "unknown";
   if (normalized.includes("thunder") || normalized.includes("storm")) return "storm";
+  if (normalized.includes("sleet") || normalized.includes("freezing rain") || normalized.includes("wintry")) {
+    return "mix";
+  }
   if (
     normalized.includes("snow") ||
-    normalized.includes("sleet") ||
     normalized.includes("ice") ||
     normalized.includes("freezing")
   ) {
@@ -114,25 +130,22 @@ export function weatherRouteConditionForSample(sample: WeatherRouteSample): Weat
   ) {
     return "rain";
   }
-  if (normalized.includes("fog") || normalized.includes("mist") || normalized.includes("haze")) {
-    return "fog";
-  }
+  if (normalized.includes("fog") || normalized.includes("mist") || normalized.includes("haze")) return "fog";
   if (weather.windSpeed >= 12) return "wind";
   if (normalized.includes("cloud") || normalized.includes("overcast")) return "cloudy";
   if (normalized.includes("clear") || normalized.includes("sun")) return "clear";
-  if (normalized.includes("unavailable") || normalized.includes("unknown")) return "unknown";
   return "clear";
 }
 
-function representativeSegmentSample(start: WeatherRouteSample, end: WeatherRouteSample) {
-  return end.distanceFromStartMeters > start.distanceFromStartMeters ? end : start;
+export function weatherRouteColorForSample(sample: WeatherRouteSample) {
+  return WEATHER_ROUTE_COLORS[weatherRouteConditionForSample(sample)];
 }
 
 export function buildWeatherRouteSegments(
   route: LineString | null,
   samples: WeatherRouteSample[]
 ): WeatherRouteSegmentCollection {
-  if (!route || route.coordinates.length < 2 || samples.length < 2) {
+  if (!route || route.coordinates.length < 2 || samples.length === 0) {
     return { type: "FeatureCollection", features: [] };
   }
 
@@ -141,24 +154,28 @@ export function buildWeatherRouteSegments(
     .sort((a, b) => a.distanceFromStartMeters - b.distanceFromStartMeters);
 
   const features: WeatherRouteSegmentFeature[] = [];
+  const routeLength = lineStringLengthMeters(route);
 
-  for (let i = 0; i < sortedSamples.length - 1; i += 1) {
-    const start = sortedSamples[i];
-    const end = sortedSamples[i + 1];
-    if (end.distanceFromStartMeters <= start.distanceFromStartMeters) continue;
+  for (let i = 0; i < sortedSamples.length; i += 1) {
+    const sample = sortedSamples[i];
+    const previous = sortedSamples[i - 1];
+    const next = sortedSamples[i + 1];
+    const startDistance = previous
+      ? (previous.distanceFromStartMeters + sample.distanceFromStartMeters) / 2
+      : 0;
+    const endDistance = next
+      ? (sample.distanceFromStartMeters + next.distanceFromStartMeters) / 2
+      : routeLength;
 
-    const representative = representativeSegmentSample(start, end);
+    if (endDistance <= startDistance) continue;
+
     features.push({
       type: "Feature",
-      geometry: sliceLineByDistance(
-        route,
-        start.distanceFromStartMeters,
-        end.distanceFromStartMeters
-      ),
+      geometry: sliceLineByDistance(route, startDistance, endDistance),
       properties: {
-        sampleIndex: representative.index,
-        weatherCondition: weatherRouteConditionForSample(representative),
-        condition: representative.weather?.condition ?? "Unknown"
+        sampleIndex: sample.index,
+        weatherCondition: weatherRouteConditionForSample(sample),
+        condition: sample.weather?.condition ?? "Unknown"
       }
     });
   }

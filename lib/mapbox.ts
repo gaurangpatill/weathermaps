@@ -1,5 +1,6 @@
 import { TTLCache } from "./cache";
-import type { GeocodeResult, LngLat, RouteResult } from "./types";
+import { mapboxExcludeFromPreferences } from "./routePreferences";
+import type { GeocodeResult, LngLat, RoutePreferences, RouteResult } from "./types";
 
 const geocodeCache = new TTLCache<GeocodeResult>(10 * 60 * 1000);
 const directionsCache = new TTLCache<RouteResult>(10 * 60 * 1000);
@@ -149,9 +150,14 @@ export async function geocode(query: string): Promise<GeocodeResult> {
 
 export async function directions(
   origin: LngLat,
-  destination: LngLat
+  destination: LngLat,
+  preferences: Pick<RoutePreferences, "avoidTolls" | "avoidHighways"> = {
+    avoidTolls: false,
+    avoidHighways: false
+  }
 ): Promise<RouteResult> {
-  const key = `${origin.join(",")}_${destination.join(",")}`;
+  const exclude = mapboxExcludeFromPreferences(preferences);
+  const key = `${origin.join(",")}_${destination.join(",")}_${exclude || "none"}`;
   const cached = directionsCache.get(key);
   if (cached) return cached;
 
@@ -162,6 +168,9 @@ export async function directions(
   url.searchParams.set("access_token", token);
   url.searchParams.set("geometries", "geojson");
   url.searchParams.set("overview", "full");
+  if (exclude) {
+    url.searchParams.set("exclude", exclude);
+  }
 
   const res = await fetch(url.toString());
   if (!res.ok) {
